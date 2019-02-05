@@ -7,12 +7,14 @@
 .EXAMPLE
     TODO: include example
 #>
-Using module "udc"
+Using module udc
 
 Set-StrictMode -Version Latest
 
-Import-Module -name $($(Get-Location).Path + "\src\utils.psm1")
-Import-Module -name $($(Get-Location).Path + "\src\log.psm1")
+Import-Module -name $($(Get-Location).Path + "\src\dsdk\utils.psm1")
+Import-Module -name $($(Get-Location).Path + "\src\dsdk\log.psm1")
+
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 
 class ApiConnection {
     [UDC]$udc
@@ -53,7 +55,7 @@ class ApiConnection {
         $newheaders.Add("content-type", "application/json")
 
         # Add API token if it exists
-        if ($this.api_key -ne "") {
+        if ($this.api_key -ne $null) {
             $newheaders.Add("Auth-Token", $this.api_key)
         }
 
@@ -61,16 +63,18 @@ class ApiConnection {
         # Handle query parameters
         if ($params) {
             ForEach ($param in $params.GetEnumerator()) {
-                If ( -Not $urlpath -Like "*&" ) {
-                    $urlpath += "&"
+                If ( -Not $urlpath -Like "*?" ) {
+                    $urlpath += "?"
                 }
-                $urlpath = $urlpath + "?" + $param.Name + "=" + $param.Value
+                $urlpath = $urlpath + "&" + $param.Name + "=" + $param.Value
             }
         }
 
         $port = If ($this.secure) {"7718"} Else {"7717"}
+        $schema = If ($this.secure) {"https://"} Else {"http://"}
 
-        $urlpath = $($this.udc.mgmt_ip, ":", $port, "/v", $this.udc.api_version, "/", $urlpath) -join ""
+
+        $urlpath = $($schema, $this.udc.mgmt_ip, ":", $port, "/v", $this.udc.api_version, "/", $urlpath) -join ""
 
         $reqdebug = "`nDatera Trace ID: ${tid}`n" +
                     "Datera Request ID: ${rid}`n" +
@@ -88,12 +92,16 @@ class ApiConnection {
                                       -Headers $newheaders `
                                       -Body $($body | ConvertTo-Json) `
         } Catch {
-            echo $_.Exception
-            $respStream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($respStream)
-            $reader.BaseStream.Position = 0
-            $reader.DiscardBufferedData()
-            $resp = $reader.ReadToEnd() | ConvertFrom-Json
+            $r = $_.Exception.Response
+            if ($r -ne $null) {
+                $respStream = $r.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($respStream)
+                $reader.BaseStream.Position = 0
+                $reader.DiscardBufferedData()
+                $resp = $reader.ReadToEnd() | ConvertFrom-Json
+            } else {
+                return Get-PSCallStack
+            }
         }
         $t2 = Get-Date
         $delta = [math]::Round($(New-Timespan -Start $t1 -End $t2).TotalSeconds, 2)
@@ -118,7 +126,11 @@ class ApiConnection {
 
     [void] Login(){
         Write-Log "Performing Login"
-        $apik = $this.DoRequest("PUT", "login", @{}, @{name="admin"; password="password"}, @{}, $true)
+        $apik = $($this.DoRequest("PUT", "login", @{}, @{}, @{name="admin"; password="password"}, $true)).key
         $this.api_key = $apik
     }
+}
+
+Function New-ApiConnection {
+    return [ApiConnection]::new()
 }
