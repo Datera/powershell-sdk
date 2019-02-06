@@ -14,3 +14,6 @@ Function New-Uuid {
     return [guid]::NewGuid().ToString()
 }
 
+Function Confirm-Attr {
+    return $args[0].PSobject.Properties.Name -contains $args[1]
+}

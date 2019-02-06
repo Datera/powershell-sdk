@@ -54,14 +54,18 @@ class ApiConnection {
         }
         $newheaders.Add("content-type", "application/json")
 
+        If ( -Not $newheaders.containsKey("tenant") ) {
+            $newheaders.Add("tenant", "/root")
+        }
+
         # Add API token if it exists
-        if ($this.api_key -ne $null) {
+        If ($this.api_key -ne $null) {
             $newheaders.Add("Auth-Token", $this.api_key)
         }
 
 
         # Handle query parameters
-        if ($params) {
+        If ($params) {
             ForEach ($param in $params.GetEnumerator()) {
                 If ( -Not $urlpath -Like "*?" ) {
                     $urlpath += "?"
@@ -93,15 +97,11 @@ class ApiConnection {
                                       -Body $($body | ConvertTo-Json) `
         } Catch {
             $r = $_.Exception.Response
-            if ($r -ne $null) {
-                $respStream = $r.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($respStream)
-                $reader.BaseStream.Position = 0
-                $reader.DiscardBufferedData()
-                $resp = $reader.ReadToEnd() | ConvertFrom-Json
-            } else {
-                return Get-PSCallStack
-            }
+            $respStream = $r.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($respStream)
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $resp = $reader.ReadToEnd() | ConvertFrom-Json
         }
         $t2 = Get-Date
         $delta = [math]::Round($(New-Timespan -Start $t1 -End $t2).TotalSeconds, 2)
@@ -116,7 +116,7 @@ class ApiConnection {
                      "Datera Response ID: ${rid}`n" +
                      "Datera Response TimeDelta: ${delta}s`n" +
                      "Datera Response URL: ${urlpath}`n" +
-                     "Datera Response Payload: ${payload}`n" +
+                     "Datera Response Payload: $($payload | ConvertTo-Json )`n" +
                      "Datera Response Object: ${obj}`n"
 
         Write-Log $respdebug
@@ -124,10 +124,40 @@ class ApiConnection {
         return $resp
     }
 
+    [PSCustomObject] DoRequestWithAuth(
+        [string]$method, [string]$urlpath, [hashtable]$headers,
+        [hashtable]$params, [hashtable]$body, [bool]$sensitive){
+        if ($this.api_key -eq $null) {
+            $this.Login()
+        }
+        $result = $this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive)
+        # HTTP 401 is Authentication Failure
+        if ((Confirm-Attr $result "http") -and ($result.http -eq 401)) {
+            $this.Login()
+            $result = $this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive)
+        }
+        return $result
+    }
+
     [void] Login(){
         Write-Log "Performing Login"
+        $this.api_key = $null
         $apik = $($this.DoRequest("PUT", "login", @{}, @{}, @{name="admin"; password="password"}, $true)).key
         $this.api_key = $apik
+    }
+
+    [PSCustomObject] Get([string]$urlpath, [hashtable]$params) {
+        return $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
+    }
+
+    [PSCustomObject[]] List([string]$urlpath, [hashtable]$params) {
+        $result = $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
+        # Perform accumulation
+        $metadata = $result.metadata
+        if ($metadata.limit -ne 0 -or $metadata.offset -ne 0) {
+            return $result.data
+        }
+        return $result.data
     }
 }
 
