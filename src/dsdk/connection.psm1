@@ -8,6 +8,7 @@
     TODO: include example
 #>
 Using module udc
+Using module dsdk_exceptions
 
 Set-StrictMode -Version Latest
 
@@ -66,11 +67,13 @@ class ApiConnection {
 
         # Handle query parameters
         If ($params) {
+            $divider = ""
             ForEach ($param in $params.GetEnumerator()) {
                 If ( -Not $urlpath -Like "*?" ) {
                     $urlpath += "?"
                 }
-                $urlpath = $urlpath + "&" + $param.Name + "=" + $param.Value
+                $urlpath = $urlpath + $divider + $param.Name + "=" + $param.Value
+                $divider = "&"
             }
         }
 
@@ -127,14 +130,14 @@ class ApiConnection {
     [PSCustomObject] DoRequestWithAuth(
         [string]$method, [string]$urlpath, [hashtable]$headers,
         [hashtable]$params, [hashtable]$body, [bool]$sensitive){
-        if ($this.api_key -eq $null) {
+        If ($this.api_key -eq $null) {
             $this.Login()
         }
-        $result = $this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive)
-        # HTTP 401 is Authentication Failure
-        if ((Confirm-Attr $result "http") -and ($result.http -eq 401)) {
+        Try {
+            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive))
+        } Catch [ApiUnauthorized] {
             $this.Login()
-            $result = $this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive)
+            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive))
         }
         return $result
     }
@@ -146,18 +149,56 @@ class ApiConnection {
         $this.api_key = $apik
     }
 
+    [PSCustomObject] HandleReturnCode([PSCustomObject]$obj) {
+        If (-Not (Confirm-Attr $obj "http")) {
+            return $obj
+        }
+        If ($obj.http -eq 401) {
+            throw [ApiUnauthorized]::new($obj.message, $obj)
+        }
+        If ($obj.http -eq 404) {
+            throw [ApiNotFound]::new($obj.message, $obj)
+        }
+        If ($obj.http -eq 500) {
+            throw [ApiInternalError]::new($obj.message, $obj)
+        }
+        throw [ApiUnknown]::new($obj.message, $obj)
+    }
+
     [PSCustomObject] Get([string]$urlpath, [hashtable]$params) {
-        return $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
+        return $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false).data
     }
 
     [PSCustomObject[]] List([string]$urlpath, [hashtable]$params) {
         $result = $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
         # Perform accumulation
         $metadata = $result.metadata
-        if ($metadata.limit -ne 0 -or $metadata.offset -ne 0) {
+        If ((($metadata.limit -ne 0) -and ($metadata.limit -ne 100)) -or
+            ((Confirm-Attr $metadata "offset") -and ($metadata.offset -ne 0))) {
+            Write-Log "metadata: $metadata"
             return $result.data
         }
-        return $result.data
+        $data = $result.data
+        $offset = 0
+        $tcnt = 0
+        $ldata = $data.Length
+        Write-Log "tcnt $tcnt, ldata $ldata, offset $offset"
+        While ($ldata -ne $tcnt) {
+            $tcnt = $result.metadata.total_count
+            $offset += $result.data.Length
+            Write-Log "tcnt $tcnt, ldata $ldata, offset $offset"
+            If ($offset -ge $tcnt) {
+                break
+            }
+            $params.Set_Item("offset", $offset)
+            Try {
+                $result = $this.HandleReturnCode($this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false))
+            } Catch [DateraApiException] {
+                return $data
+            }
+            $data += $result.data
+        }
+        return $data
     }
 }
 
