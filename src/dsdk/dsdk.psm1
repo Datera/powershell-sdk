@@ -165,6 +165,14 @@ class ApiConnection {
         throw [ApiUnknown]::new($obj.message, $obj)
     }
 
+    [PSCustomObject] Create([string]$urlpath, [hashtable]$body) {
+        return $this.DoRequestWithAuth("Post", $urlpath, @{}, @{}, $body, $false).data
+    }
+
+    [PSCustomObject] Set([string]$urlpath, [hashtable]$body) {
+        return $this.DoRequestWithAuth("Put", $urlpath, @{}, @{}, $body, $false).data
+    }
+
     [PSCustomObject] Get([string]$urlpath, [hashtable]$params) {
         return $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false).data
     }
@@ -175,24 +183,21 @@ class ApiConnection {
         $metadata = $result.metadata
         If ((($metadata.limit -ne 0) -and ($metadata.limit -ne 100)) -or
             ((Confirm-Attr $metadata "offset") -and ($metadata.offset -ne 0))) {
-            Write-Log "metadata: $metadata"
             return $result.data
         }
         $data = $result.data
         $offset = 0
         $tcnt = 0
         $ldata = $data.Length
-        Write-Log "tcnt $tcnt, ldata $ldata, offset $offset"
         While ($ldata -ne $tcnt) {
             $tcnt = $result.metadata.total_count
             $offset += $result.data.Length
-            Write-Log "tcnt $tcnt, ldata $ldata, offset $offset"
             If ($offset -ge $tcnt) {
                 break
             }
             $params.Set_Item("offset", $offset)
             Try {
-                $result = $this.HandleReturnCode($this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false))
+                $result = $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
             } Catch [DateraApiException] {
                 return $data
             }
