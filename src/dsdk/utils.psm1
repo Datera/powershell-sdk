@@ -15,5 +15,5 @@ Function New-Uuid {
 }
 
 Function Confirm-Attr {
-    return $args[0].PSobject.Properties.Name -contains $args[1]
+    return $args[0].PSobject.Properties.Name.Contains($args[1])
 }

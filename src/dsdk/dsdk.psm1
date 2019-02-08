@@ -12,10 +12,15 @@ Using module dsdk_exceptions
 
 Set-StrictMode -Version Latest
 
-Import-Module -name $($(Get-Location).Path + "\src\dsdk\utils.psm1")
-Import-Module -name $($(Get-Location).Path + "\src\dsdk\log.psm1")
+Import-Module -name $($PSScriptRoot + "\utils.psm1")
+Import-Module -name $($PSScriptRoot + "\log.psm1")
+
+Write-Output "Location: $($(Get-Location).Path)"
 
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+
+# Cached connection object
+$global:datconn = $null
 
 class ApiConnection {
     [UDC]$udc
@@ -69,7 +74,7 @@ class ApiConnection {
         If ($params) {
             $divider = ""
             ForEach ($param in $params.GetEnumerator()) {
-                If ( -Not $urlpath -Like "*?" ) {
+                If ( -Not $urlpath.Contains("?") ) {
                     $urlpath += "?"
                 }
                 $urlpath = $urlpath + $divider + $param.Name + "=" + $param.Value
@@ -99,7 +104,14 @@ class ApiConnection {
                                       -Headers $newheaders `
                                       -Body $($body | ConvertTo-Json) `
         } Catch {
-            $r = $_.Exception.Response
+            $e = $_.Exception
+            If (-Not (Confirm-Attr $e "Response")) {
+                throw
+            }
+            $r = $e.Response
+            If ($r -eq $null) {
+                throw
+            }
             $respStream = $r.GetResponseStream()
             $reader = New-Object System.IO.StreamReader($respStream)
             $reader.BaseStream.Position = 0
@@ -173,8 +185,12 @@ class ApiConnection {
         return $this.DoRequestWithAuth("Put", $urlpath, @{}, @{}, $body, $false).data
     }
 
-    [PSCustomObject] Get([string]$urlpath, [hashtable]$params) {
-        return $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false).data
+    [PSCustomObject] Get([string]$urlpath) {
+        return $this.DoRequestWithAuth("Get", $urlpath, @{}, @{}, $null, $false).data
+    }
+
+    [PSCustomObject] Delete([string]$urlpath) {
+        return $this.DoRequestWithAuth("Delete", $urlpath, @{}, @{}, $null, $false).data
     }
 
     [PSCustomObject[]] List([string]$urlpath, [hashtable]$params) {
@@ -188,9 +204,12 @@ class ApiConnection {
         $data = $result.data
         $offset = 0
         $tcnt = 0
+        $rcnt = 0
+        $limit = $result.metadata.limit
         $ldata = $data.Length
-        While ($ldata -ne $tcnt) {
+        While (($ldata -ne $tcnt) -and ($ldata -ne $limit) -and ($ldata -ne $rcnt)) {
             $tcnt = $result.metadata.total_count
+            $rcnt = $result.metadata.request_count
             $offset += $result.data.Length
             If ($offset -ge $tcnt) {
                 break
@@ -207,6 +226,280 @@ class ApiConnection {
     }
 }
 
-Function New-ApiConnection {
-    return [ApiConnection]::new()
+Function New-DateraApiConnection {
+    Param(
+        [Parameter(mandatory=$false)]
+        [UDC]$udc,
+
+        [Parameter(mandatory=$false)]
+        [switch]$force
+    )
+    If (($global:datconn -eq $null) -or ($force)) {
+        If ($udc -ne $null) {
+            $global:datconn = [ApiConnection]::new($udc)
+        } Else {
+            $global:datconn = [ApiConnection]::new()
+        }
+    }
+    return $global:datconn
+}
+
+#########################
+# AppInstance Functions #
+#########################
+Function Get-DateraAppInstances {
+    Param(
+        [Parameter(mandatory=$false)]
+        [int]$limit,
+
+        [Parameter(mandatory=$false)]
+        [int]$offset,
+
+        [Parameter(mandatory=$false)]
+        [string]$sort,
+
+        [Parameter(mandatory=$false)]
+        [string]$filter
+    )
+    $params = @{}
+    If ($limit -gt 0) {
+        $params["limit"] = $limit
+    }
+    If ($offset -gt 0) {
+        $params["offset"] = $offset
+    }
+    If ($sort -ne "") {
+        $params["sort"] = $sort
+    }
+    If ($filter -ne "") {
+        $params["filter"] = $filter
+    }
+    return $(New-DateraApiConnection).List("app_instances", $params)
+}
+
+Function Get-DateraAppInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$id
+    )
+    return $(New-DateraApiConnection).Get("app_instances/$id")
+}
+
+Function Get-DateraAppInstanceMatchName {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$m
+    )
+    return $(New-DateraApiConnection).List("app_instances", @{filter="match(name,.*$m.*)"})
+}
+
+Function Set-DateraAppInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$id,
+
+        [Parameter(mandatory=$true)]
+        [hashtable]$kvs
+    )
+    return $(New-DateraApiConnection).Set("app_instances/$id", $kvs)
+}
+
+Function Remove-DateraAppInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$id
+    )
+    return $(New-DateraApiConnection).Delete("app_instances/$id")
+}
+
+
+#############################
+# StorageInstance Functions #
+#############################
+Function Get-DateraStorageInstances {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [int]$limit,
+
+        [Parameter(mandatory=$false)]
+        [int]$offset,
+
+        [Parameter(mandatory=$false)]
+        [string]$sort,
+
+        [Parameter(mandatory=$false)]
+        [string]$filter
+    )
+    $params = @{}
+    If ($limit -gt 0) {
+        $params["limit"] = $limit
+    }
+    If ($offset -gt 0) {
+        $params["offset"] = $offset
+    }
+    If ($sort -ne "") {
+        $params["sort"] = $sort
+    }
+    If ($filter -ne "") {
+        $params["filter"] = $filter
+    }
+    return $(New-DateraApiConnection).List("app_instances/$appid/storage_instances", $params)
+}
+
+Function Get-DateraStorageInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1"
+    )
+    return $(New-DateraApiConnection).Get("app_instances/$appid/storage_instances/$sid")
+}
+
+Function Get-DateraStorageInstanceMatchName {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$true)]
+        [string]$m
+    )
+    return $(New-DateraApiConnection).List("app_instances/$appid/storage_instances", @{filter="match(name,.*$m.*)"})
+}
+
+Function Set-DateraStorageInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$true)]
+        [hashtable]$kvs
+    )
+    return $(New-DateraApiConnection).Set("app_instances/$appid/storage_instances/$sid", $kvs)
+}
+
+Function Remove-DateraStorageInstance {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1"
+    )
+    return $(New-DateraApiConnection).Delete("app_instances/$appid/storage_instances/$sid")
+}
+
+####################
+# Volume Functions #
+####################
+Function Get-DateraVolumes {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [int]$limit,
+
+        [Parameter(mandatory=$false)]
+        [int]$offset,
+
+        [Parameter(mandatory=$false)]
+        [string]$sort,
+
+        [Parameter(mandatory=$false)]
+        [string]$filter
+    )
+    $params = @{}
+    If ($limit -gt 0) {
+        $params["limit"] = $limit
+    }
+    If ($offset -gt 0) {
+        $params["offset"] = $offset
+    }
+    If ($sort -ne "") {
+        $params["sort"] = $sort
+    }
+    If ($filter -ne "") {
+        $params["filter"] = $filter
+    }
+    return $(New-DateraApiConnection).List("app_instances/$appid/storage_instances/$sid/volumes", $params)
+}
+
+Function Get-DateraVolume {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [string]$volid = "volume-1"
+    )
+    return $(New-DateraApiConnection).Get("app_instances/$appid/storage_instances/$sid/volumes/$volid")
+}
+
+Function Get-DateraVolumeMatchName {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [string]$volid = "volume-1",
+
+        [Parameter(mandatory=$true)]
+        [string]$m
+    )
+    return $(New-DateraApiConnection).List("app_instances/$appid/storage_instances/$sid/volumes", @{filter="match(name,.*$m.*)"})
+}
+
+Function Set-DateraVolume {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [string]$volid = "volume-1",
+
+        [Parameter(mandatory=$true)]
+        [hashtable]$kvs
+    )
+    return $(New-DateraApiConnection).Set("app_instances/$appid/storage_instances/$sid/volumes/$volid", $kvs)
+}
+
+Function Remove-DateraVolume {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$appid,
+
+        [Parameter(mandatory=$false)]
+        [string]$sid = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [string]$volid = "volume-1"
+    )
+    return $(New-DateraApiConnection).Delete("app_instances/$appid/storage_instances/$sid/volumes/$volid")
+}
+
+####################
+# System Functions #
+####################
+Function Get-DateraSystem {
+    return $(New-DateraApiConnection).Get("system")
 }
