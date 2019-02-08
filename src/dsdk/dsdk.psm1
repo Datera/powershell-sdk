@@ -18,6 +18,7 @@ Import-Module -name $($PSScriptRoot + "\log.psm1")
 
 Write-Output "Location: $($(Get-Location).Path)"
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 
 # Cached connection object
@@ -106,12 +107,14 @@ class ApiConnection {
                                       -Body $($body | ConvertTo-Json -depth 100) `
         } Catch {
             $e = $_.Exception
+            Write-Log "Exception: $e"
             If (-Not (Confirm-Attr $e "Response")) {
                 throw
             }
             $r = $e.Response
+            Write-Log "Exception Response: $r"
             If ($r -eq $null) {
-                throw
+                throw [ApiUnauthorized]::new("Unauthorized due to lack of response")
             }
             $respStream = $r.GetResponseStream()
             $reader = New-Object System.IO.StreamReader($respStream)
