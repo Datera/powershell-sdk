@@ -78,8 +78,6 @@ would run the following:
 PS> Using module dsdk
 PS> Get-DateraAppinstances -limit 2
 
-PS C:\Users\Administrator> Get-DateraAppinstances -limit 2
-
 tenant            : /root
 path              : /app_instances/6c3aade7-105a-47f6-9480-9472445edbdf
 name              : my-test-3
@@ -127,10 +125,14 @@ Everything is returned as a list of PSCustomObjects so they are compatible with
 normal Powershell pipeline operations:
 
 ```powershell
-PS C:\Users\Administrator> Get-DateraAppinstances -limit 5 -sort name | ForEach {$_.name}
+PS> Get-DateraAppinstances -limit 5 -sort name | ForEach {$_.name}
 my-test-0
 my-test-1
 my-test-10
 my-test-100
 my-test-11
 ```
+
+To get a full list of available commands, run the following:
+```powershell
+PS> Get-Command -Module dsdk | select-string Datera
