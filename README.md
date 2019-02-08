@@ -56,7 +56,7 @@ Valid Locations:
 {
     "mgmt_ip":  "1.1.1.1",
     "username":  "admin",
-    "password":  "password"
+    "password":  "password",
     "tenant":  "/root",
     "api_version":  "2.2",
 }
