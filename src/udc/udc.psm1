@@ -75,6 +75,7 @@ Function Find-ConfigFile {
         ForEach ($file in $FILENAMES) {
             $np = Join-Path -Path $path -ChildPath $file
             If (Test-Path $np) {
+                Write-Host "Found config file at: $np"
                 return $np
             }
         }
