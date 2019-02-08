@@ -68,7 +68,7 @@ class UDC {
     [string]$ldap
 }
 
-$env:DAT__CONFIG=$([UDC]::new()) | ConvertTo-Json
+$env:DAT__CONFIG=$([UDC]::new()) | ConvertTo-Json -depth 100
 
 Function Find-ConfigFile {
     ForEach ($path in $SEARCH_PATH) {
@@ -115,7 +115,7 @@ Function Get-UdcConfig {
 
         $cf = Get-BaseConfig
         Update-BaseConfigFromEnv $cf
-        $env:DAT__CONFIG = $cf | ConvertTo-Json
+        $env:DAT__CONFIG = $cf | ConvertTo-Json -depth 100
     }
     return $env:DAT__CONFIG | ConvertFrom-Json
 }

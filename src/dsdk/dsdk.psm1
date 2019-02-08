@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Connection module. Handles connection to Datera platform
+    SDK module. Handles connection to Datera platform and provides
+    helper functions for viewing and manipulating Datera resources
 .DESCRIPTION
     This module contains the function used for connecting to the Datera DSP
     platform and handling the returned data structures
@@ -92,8 +93,8 @@ class ApiConnection {
                     "Datera Request ID: ${rid}`n" +
                     "Datera Request URL: ${urlpath}`n" +
                     "Datera Request Method: ${method}`n" +
-                    "Datera Request Payload: $($body | ConvertTo-Json)`n" +
-                    "Datera Request Headers: $($newheaders | ConvertTo-Json)`n"
+                    "Datera Request Payload: $($body | ConvertTo-Json -depth 100)`n" +
+                    "Datera Request Headers: $($newheaders | ConvertTo-Json -depth 100)`n"
 
         Write-Log $reqdebug
 
@@ -102,7 +103,7 @@ class ApiConnection {
             $resp = Invoke-RestMethod -Uri $urlpath `
                                       -Method $method `
                                       -Headers $newheaders `
-                                      -Body $($body | ConvertTo-Json) `
+                                      -Body $($body | ConvertTo-Json -depth 100) `
         } Catch {
             $e = $_.Exception
             If (-Not (Confirm-Attr $e "Response")) {
@@ -131,7 +132,7 @@ class ApiConnection {
                      "Datera Response ID: ${rid}`n" +
                      "Datera Response TimeDelta: ${delta}s`n" +
                      "Datera Response URL: ${urlpath}`n" +
-                     "Datera Response Payload: $($payload | ConvertTo-Json )`n" +
+                     "Datera Response Payload: $($payload | ConvertTo-Json -depth 100)`n" +
                      "Datera Response Object: ${obj}`n"
 
         Write-Log $respdebug
@@ -244,9 +245,61 @@ Function New-DateraApiConnection {
     return $global:datconn
 }
 
+###################
+# Combo Functions #
+###################
+
+Function New-DateraAiSiVol {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$name,
+
+        [Parameter(mandatory=$true)]
+        [int]$size,
+
+        [Parameter(mandatory=$false)]
+        [int]$replicas = 3,
+
+        [Parameter(mandatory=$false)]
+        [string]$placement = "hybrid",
+
+        [Parameter(mandatory=$false)]
+        [string]$ip_pool = "default",
+
+        [Parameter(mandatory=$false)]
+        [string]$siname = "storage-1",
+
+        [Parameter(mandatory=$false)]
+        [string]$volname = "volume-1"
+
+    )
+
+    $body = @{
+        "name"=$name;
+        "access_control_mode"="deny_all";
+        "storage_instances"=@(
+            @{
+                "name"=$siname;
+                "ip_pool"=@{"path"="/access_network_ip_pools/$ip_pool"};
+                "volumes"=@(
+                    @{
+                        "name"=$volname;
+                        "size"=$size;
+                        "placement_mode"=$placement;
+                        "replica_count"=$replicas;
+                        "snapshot_policies"=@();
+                    }
+                );
+            }
+        );
+    }
+    return $(New-DateraApiConnection).Create("app_instances", $body)
+}
+
 #########################
 # AppInstance Functions #
 #########################
+
 Function Get-DateraAppInstances {
     Param(
         [Parameter(mandatory=$false)]
@@ -495,6 +548,74 @@ Function Remove-DateraVolume {
         [string]$volid = "volume-1"
     )
     return $(New-DateraApiConnection).Delete("app_instances/$appid/storage_instances/$sid/volumes/$volid")
+}
+
+#######################
+# Initiator Functions #
+#######################
+
+Function New-DateraInitiator {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$name,
+
+        [Parameter(mandatory=$true)]
+        [string]$id,
+
+        [Parameter(mandatory=$false)]
+        [switch]$force
+    )
+    $body = @{id=$id; name=$name; force=$force}
+    return $(New-DateraApiConnection).Create("initiators", $body)
+}
+
+Function Get-DateraInitiators {
+    Param(
+        [Parameter(mandatory=$false)]
+        [int]$limit,
+
+        [Parameter(mandatory=$false)]
+        [int]$offset,
+
+        [Parameter(mandatory=$false)]
+        [string]$sort,
+
+        [Parameter(mandatory=$false)]
+        [string]$filter
+    )
+    $params = @{}
+    If ($limit -gt 0) {
+        $params["limit"] = $limit
+    }
+    If ($offset -gt 0) {
+        $params["offset"] = $offset
+    }
+    If ($sort -ne "") {
+        $params["sort"] = $sort
+    }
+    If ($filter -ne "") {
+        $params["filter"] = $filter
+    }
+    return $(New-DateraApiConnection).List("initiators", $params)
+}
+
+Function Get-DateraInitiator {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$id
+    )
+    return $(New-DateraApiConnection).Get("initiators/$id")
+}
+
+Function Set-DateraInitiator {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$id,
+
+        [Parameter(mandatory=$true)]
+        [hashtable]$kvs
+    )
+    return $(New-DateraApiConnection).Set("initiators/$id", $kvs)
 }
 
 ####################
