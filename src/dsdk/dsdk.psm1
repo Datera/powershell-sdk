@@ -671,10 +671,10 @@ Function Get-DateraSystem {
 ########################
 # Log Upload Functions #
 ########################
-Function Send-File {
-    Param(
-        [Parameter(mandatory=$true)]
-        [string]$file
-    )
-    return $(New-DateraApiConnection).Upload("logs_upload", $file, @{"ecosystem" = "other"})
-}
+# Function Send-File {
+#     Param(
+#         [Parameter(mandatory=$true)]
+#         [string]$file
+#     )
+#     return $(New-DateraApiConnection).Upload("logs_upload", $file, @{"ecosystem" = "other"})
+# }
