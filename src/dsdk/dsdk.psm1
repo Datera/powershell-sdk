@@ -24,6 +24,7 @@ Write-Output "Location: $($(Get-Location).Path)"
 # Cached connection object
 $global:datconn = $null
 
+# TODO: Implement tenancy
 class ApiConnection {
     [UDC]$udc
     [string]$api_key
@@ -49,7 +50,8 @@ class ApiConnection {
     }
 
     [PSCustomObject] DoRequest([string]$method, [string]$urlpath, [hashtable]$headers,
-                               [hashtable]$params, [hashtable]$body, [bool]$sensitive){
+                               [hashtable]$params, [hashtable]$body, [string]$file,
+                               [bool]$sensitive){
 
         $tid = "None"
         $rid = New-Uuid
@@ -90,21 +92,54 @@ class ApiConnection {
 
         $urlpath = $($schema, $this.udc.mgmt_ip, ":", $port, "/v", $this.udc.api_version, "/", $urlpath) -join ""
 
-        $reqdebug = "`nDatera Trace ID: ${tid}`n" +
-                    "Datera Request ID: ${rid}`n" +
-                    "Datera Request URL: ${urlpath}`n" +
-                    "Datera Request Method: ${method}`n" +
-                    "Datera Request Payload: $($body | ConvertTo-Json -depth 100)`n" +
-                    "Datera Request Headers: $($newheaders | ConvertTo-Json -depth 100)`n"
-
-        Write-Log $reqdebug
-
         $t1 = Get-Date
         Try {
-            $resp = Invoke-RestMethod -Uri $urlpath `
-                                      -Method $method `
-                                      -Headers $newheaders `
-                                      -Body $($body | ConvertTo-Json -depth 100) `
+            If ( ($file -ne "") -and ($file -ne $null) ) {
+                $boundary = [System.Guid]::NewGuid().ToString()
+                $LF = "`n"
+                $fileBin = Get-Content -Raw $file
+                $fileName = Split-Path -Path $file -Leaf
+                $ecosystem = $body["ecosystem"]
+                $bodyLines = (
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"ecosystem`"$LF",
+                "$ecosystem",
+                "--$boundary",
+                "Content-Disposition: form-data; name=`"log_files[]`"; filename=`"$fileName`"",
+                "Content-Type: application/octet-stream$LF",
+                $fileBin,
+                "--$boundary--$LF") -join $LF
+                # We need to remove this because we're changing it for this
+                # kind of request
+                $newheaders.Remove("content-type")
+                $newheaders.Add("Accept", "*/*")
+                $reqdebug = "`nDatera Trace ID: ${tid}`n" +
+                            "Datera Request ID: ${rid}`n" +
+                            "Datera Request URL: ${urlpath}`n" +
+                            "Datera Request Method: ${method}`n" +
+                            "Datera Request Payload: $bodylines`n" +
+                            "Datera Request Headers: $($newheaders | ConvertTo-Json -depth 100)`n"
+                Write-Log $reqdebug
+
+                $resp = Invoke-RestMethod -Uri $urlpath `
+                                          -Method $method `
+                                          -ContentType "multipart/form-data; boundary=`"$boundary`"" `
+                                          -Headers $newheaders `
+                                          -Body $bodyLines `
+            } Else {
+                $reqdebug = "`nDatera Trace ID: ${tid}`n" +
+                            "Datera Request ID: ${rid}`n" +
+                            "Datera Request URL: ${urlpath}`n" +
+                            "Datera Request Method: ${method}`n" +
+                            "Datera Request Payload: $($body | ConvertTo-Json -depth 100)`n" +
+                            "Datera Request Headers: $($newheaders | ConvertTo-Json -depth 100)`n"
+                Write-Log $reqdebug
+
+                $resp = Invoke-RestMethod -Uri $urlpath `
+                                          -Method $method `
+                                          -Headers $newheaders `
+                                          -Body $($body | ConvertTo-Json -depth 100) `
+            }
         } Catch {
             $e = $_.Exception
             Write-Log "Exception: $e"
@@ -145,15 +180,16 @@ class ApiConnection {
 
     [PSCustomObject] DoRequestWithAuth(
         [string]$method, [string]$urlpath, [hashtable]$headers,
-        [hashtable]$params, [hashtable]$body, [bool]$sensitive){
-        If ($this.api_key -eq $null) {
+        [hashtable]$params, [hashtable]$body, [string]$file,
+        [bool]$sensitive) {
+        If (($this.api_key -eq "") -or ($this.api_key -eq $null)) {
             $this.Login()
         }
         Try {
-            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive))
+            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $file, $sensitive))
         } Catch [ApiUnauthorized] {
             $this.Login()
-            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $sensitive))
+            $result = $this.HandleReturnCode($this.DoRequest($method, $urlpath, $headers, $params, $body, $file, $sensitive))
         }
         return $result
     }
@@ -161,7 +197,7 @@ class ApiConnection {
     [void] Login(){
         Write-Log "Performing Login"
         $this.api_key = $null
-        $apik = $($this.DoRequest("PUT", "login", @{}, @{}, @{name="admin"; password="password"}, $true)).key
+        $apik = $($this.DoRequest("PUT", "login", @{}, @{}, @{name="admin"; password="password"}, $null, $true)).key
         $this.api_key = $apik
     }
 
@@ -182,23 +218,23 @@ class ApiConnection {
     }
 
     [PSCustomObject] Create([string]$urlpath, [hashtable]$body) {
-        return $this.DoRequestWithAuth("Post", $urlpath, @{}, @{}, $body, $false).data
+        return $this.DoRequestWithAuth("Post", $urlpath, @{}, @{}, $body, $null, $false).data
     }
 
     [PSCustomObject] Set([string]$urlpath, [hashtable]$body) {
-        return $this.DoRequestWithAuth("Put", $urlpath, @{}, @{}, $body, $false).data
+        return $this.DoRequestWithAuth("Put", $urlpath, @{}, @{}, $body, $null, $false).data
     }
 
     [PSCustomObject] Get([string]$urlpath) {
-        return $this.DoRequestWithAuth("Get", $urlpath, @{}, @{}, $null, $false).data
+        return $this.DoRequestWithAuth("Get", $urlpath, @{}, @{}, $null, $null, $false).data
     }
 
     [PSCustomObject] Delete([string]$urlpath) {
-        return $this.DoRequestWithAuth("Delete", $urlpath, @{}, @{}, $null, $false).data
+        return $this.DoRequestWithAuth("Delete", $urlpath, @{}, @{}, $null, $null, $false).data
     }
 
     [PSCustomObject[]] List([string]$urlpath, [hashtable]$params) {
-        $result = $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $false)
+        $result = $this.DoRequestWithAuth("Get", $urlpath, @{}, $params, $null, $null, $false)
         # Perform accumulation
         $metadata = $result.metadata
         If ((($metadata.limit -ne 0) -and ($metadata.limit -ne 100)) -or
@@ -227,6 +263,10 @@ class ApiConnection {
             $data += $result.data
         }
         return $data
+    }
+
+    [PSCustomObject[]] Upload([string]$urlpath, [string[]]$file, [hashtable]$body) {
+        return $this.DoRequestWithAuth("Put", $urlpath, @{}, @{}, $body, $file, $false).data
     }
 }
 
@@ -626,4 +666,15 @@ Function Set-DateraInitiator {
 ####################
 Function Get-DateraSystem {
     return $(New-DateraApiConnection).Get("system")
+}
+
+########################
+# Log Upload Functions #
+########################
+Function Send-File {
+    Param(
+        [Parameter(mandatory=$true)]
+        [string]$file
+    )
+    return $(New-DateraApiConnection).Upload("logs_upload", $file, @{"ecosystem" = "other"})
 }
