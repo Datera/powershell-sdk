@@ -58,7 +58,7 @@ Valid Locations:
     "username":  "admin",
     "password":  "password",
     "tenant":  "/root",
-    "api_version":  "2.2",
+    "api_version":  "2.2"
 }
 ```
 
